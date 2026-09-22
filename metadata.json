@@ -1,0 +1,6 @@
+{
+  "name": "Figurinhas Pro",
+  "description": "Tire uma foto. Vire figurinha. Compartilhe sua reação. Crie figurinhas personalizadas para WhatsApp com câmera, recorte e memes.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
