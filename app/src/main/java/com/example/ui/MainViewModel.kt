@@ -17,6 +17,7 @@ import com.example.data.SubscriptionEntity
 import com.example.data.UserEntity
 import com.example.engine.CutoutAlgorithm
 import com.example.engine.StickerEngine
+import com.example.model.StickerEmojiItem
 import com.example.model.StickerFontFamily
 import com.example.model.StickerTextAlign
 import com.example.model.StickerTextBox
@@ -64,7 +65,9 @@ data class EditorState(
     val emojiText: String = "",
     val memeCategory: String = "😂 Engraçado",
     val textBoxes: List<StickerTextBox> = emptyList(),
-    val selectedTextBoxId: String? = null
+    val selectedTextBoxId: String? = null,
+    val emojiItems: List<StickerEmojiItem> = emptyList(),
+    val selectedEmojiId: String? = null
 )
 
 class MainViewModel(application: Application) : AndroidViewModel(application) {
@@ -121,6 +124,88 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val _editorState = MutableStateFlow(EditorState())
     val editorState = _editorState.asStateFlow()
 
+    // Undo / Redo & Action Feedback
+    data class EditorSnapshot(
+        val state: EditorState,
+        val cutoutBitmap: Bitmap?,
+        val actionName: String
+    )
+
+    private val undoStack = mutableListOf<EditorSnapshot>()
+    private val redoStack = mutableListOf<EditorSnapshot>()
+
+    private val _canUndo = MutableStateFlow(false)
+    val canUndo = _canUndo.asStateFlow()
+
+    private val _canRedo = MutableStateFlow(false)
+    val canRedo = _canRedo.asStateFlow()
+
+    private val _lastActionMessage = MutableStateFlow<String?>(null)
+    val lastActionMessage = _lastActionMessage.asStateFlow()
+
+    fun dismissLastActionMessage() {
+        _lastActionMessage.value = null
+    }
+
+    private fun pushUndo(actionName: String) {
+        undoStack.add(
+            EditorSnapshot(
+                state = _editorState.value,
+                cutoutBitmap = cutoutBitmap,
+                actionName = actionName
+            )
+        )
+        if (undoStack.size > 25) {
+            undoStack.removeAt(0)
+        }
+        redoStack.clear()
+        _canUndo.value = undoStack.isNotEmpty()
+        _canRedo.value = false
+        _lastActionMessage.value = actionName
+    }
+
+    fun undo(): Boolean {
+        if (undoStack.isEmpty()) return false
+        val previous = undoStack.removeAt(undoStack.lastIndex)
+        redoStack.add(
+            EditorSnapshot(
+                state = _editorState.value,
+                cutoutBitmap = cutoutBitmap,
+                actionName = previous.actionName
+            )
+        )
+        _editorState.value = previous.state
+        if (previous.cutoutBitmap != null) {
+            cutoutBitmap = previous.cutoutBitmap
+        }
+        _canUndo.value = undoStack.isNotEmpty()
+        _canRedo.value = redoStack.isNotEmpty()
+        _lastActionMessage.value = "Desfeito: ${previous.actionName}"
+        updateStickerPreview()
+        return true
+    }
+
+    fun redo(): Boolean {
+        if (redoStack.isEmpty()) return false
+        val next = redoStack.removeAt(redoStack.lastIndex)
+        undoStack.add(
+            EditorSnapshot(
+                state = _editorState.value,
+                cutoutBitmap = cutoutBitmap,
+                actionName = next.actionName
+            )
+        )
+        _editorState.value = next.state
+        if (next.cutoutBitmap != null) {
+            cutoutBitmap = next.cutoutBitmap
+        }
+        _canUndo.value = undoStack.isNotEmpty()
+        _canRedo.value = redoStack.isNotEmpty()
+        _lastActionMessage.value = "Refeito: ${next.actionName}"
+        updateStickerPreview()
+        return true
+    }
+
     // Active sticker to view in modal
     private val _selectedSticker = MutableStateFlow<StickerEntity?>(null)
     val selectedSticker = _selectedSticker.asStateFlow()
@@ -166,14 +251,20 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun onPhotoUriSelected(uri: Uri) {
+        loadBitmapFromUri(uri) { bmp ->
+            rawPhotoBitmap = bmp
+            startCutoutProcess(bmp)
+        }
+    }
+
+    fun loadBitmapFromUri(uri: Uri, onLoaded: (Bitmap) -> Unit) {
         viewModelScope.launch {
             _isProcessing.value = true
             _processingMessage.value = "Carregando foto com alta definição..."
             val bmp = StickerEngine.loadAndResizeBitmap(getApplication(), uri)
             _isProcessing.value = false
             if (bmp != null) {
-                rawPhotoBitmap = bmp
-                startCutoutProcess(bmp)
+                onLoaded(bmp)
             } else {
                 Toast.makeText(getApplication(), "Não foi possível carregar a imagem", Toast.LENGTH_SHORT).show()
             }
@@ -270,11 +361,13 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     // Editor controls
     fun updateCaption(text: String, color: Int = _editorState.value.captionColor) {
+        pushUndo("Alterar Legenda")
         _editorState.value = _editorState.value.copy(captionText = text, captionColor = color)
         updateStickerPreview()
     }
 
     fun updateOutline(color: Int, thickness: Float, style: String = _editorState.value.outlineStyle) {
+        pushUndo("Borda $style")
         _editorState.value = _editorState.value.copy(
             outlineColor = color,
             outlineThickness = thickness,
@@ -284,21 +377,25 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun updateBackground(type: String, customColor: Int = Color.TRANSPARENT) {
+        pushUndo("Fundo $type")
         _editorState.value = _editorState.value.copy(backgroundType = type, customBgColor = customColor)
         updateStickerPreview()
     }
 
     fun updateFilter(filter: String) {
+        pushUndo("Filtro $filter")
         _editorState.value = _editorState.value.copy(filter = filter)
         updateStickerPreview()
     }
 
     fun updateAccessory(accessory: String) {
+        pushUndo("Acessório $accessory")
         _editorState.value = _editorState.value.copy(accessory = accessory)
         updateStickerPreview()
     }
 
     fun updateSpeechBalloon(text: String) {
+        pushUndo("Balão de Fala")
         _editorState.value = _editorState.value.copy(speechBalloonText = text)
         updateStickerPreview()
     }
@@ -309,6 +406,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun updateMemeCategory(category: String, phrase: String = "") {
+        pushUndo("Categoria $category")
         _editorState.value = _editorState.value.copy(
             memeCategory = category,
             captionText = if (phrase.isNotBlank()) phrase else _editorState.value.captionText
@@ -325,12 +423,40 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     // --- Dynamic Text Boxes Management ---
+    private var textBoxDragInitialSnapshot: EditorState? = null
+
+    fun onStartTextBoxDrag(id: String) {
+        selectTextBox(id)
+        textBoxDragInitialSnapshot = _editorState.value
+    }
+
+    fun onMoveTextBox(id: String, newX: Float, newY: Float) {
+        val updated = _editorState.value.textBoxes.map { box ->
+            if (box.id == id) box.copy(normalizedX = newX, normalizedY = newY) else box
+        }
+        _editorState.value = _editorState.value.copy(textBoxes = updated)
+        updateStickerPreview()
+    }
+
+    fun onEndTextBoxDrag() {
+        val initial = textBoxDragInitialSnapshot
+        if (initial != null && initial.textBoxes != _editorState.value.textBoxes) {
+            undoStack.add(EditorSnapshot(initial, cutoutBitmap, "Mover texto"))
+            redoStack.clear()
+            _canUndo.value = true
+            _canRedo.value = false
+            _lastActionMessage.value = "Texto reposicionado"
+        }
+        textBoxDragInitialSnapshot = null
+    }
+
     fun addTextBox(
         initialText: String = "NOVO TEXTO",
         color: Int = Color.WHITE,
         style: StickerTextStyle = StickerTextStyle.MEME_STROKE,
         font: StickerFontFamily = StickerFontFamily.DEFAULT
     ) {
+        pushUndo("Adicionar Texto")
         val count = _editorState.value.textBoxes.size
         // Stagger vertical position so new boxes don't overlap completely
         val posY = when (count) {
@@ -370,10 +496,267 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     fun removeSelectedTextBox() {
         val selectedId = _editorState.value.selectedTextBoxId ?: return
-        val updatedList = _editorState.value.textBoxes.filter { it.id != selectedId }
+        removeTextBox(selectedId)
+    }
+
+    fun removeTextBox(id: String) {
+        pushUndo("Remover Caixa de Texto")
+        val updatedList = _editorState.value.textBoxes.filter { it.id != id }
         _editorState.value = _editorState.value.copy(
             textBoxes = updatedList,
             selectedTextBoxId = updatedList.firstOrNull()?.id
+        )
+        updateStickerPreview()
+    }
+
+    fun duplicateTextBox(id: String) {
+        val box = _editorState.value.textBoxes.find { it.id == id } ?: return
+        pushUndo("Duplicar Texto")
+        val duplicate = box.copy(
+            id = java.util.UUID.randomUUID().toString(),
+            normalizedY = (box.normalizedY + 0.12f).coerceIn(0.1f, 0.9f)
+        )
+        val updatedList = _editorState.value.textBoxes + duplicate
+        _editorState.value = _editorState.value.copy(
+            textBoxes = updatedList,
+            selectedTextBoxId = duplicate.id
+        )
+        updateStickerPreview()
+    }
+
+    fun addMemeTemplateTextBoxes(
+        topText: String = "QUANDO VOCÊ",
+        bottomText: String = "PERCEBE O QUE FEZ"
+    ) {
+        pushUndo("Template Meme (Topo & Base)")
+        val topBox = StickerTextBox(
+            text = topText,
+            textColor = Color.WHITE,
+            strokeColor = Color.BLACK,
+            fontSize = 42f,
+            fontFamily = StickerFontFamily.IMPACT_MEME,
+            textStyle = StickerTextStyle.MEME_STROKE,
+            isBold = true,
+            isUppercase = true,
+            normalizedX = 0.5f,
+            normalizedY = 0.12f
+        )
+        val bottomBox = StickerTextBox(
+            text = bottomText,
+            textColor = Color.WHITE,
+            strokeColor = Color.BLACK,
+            fontSize = 42f,
+            fontFamily = StickerFontFamily.IMPACT_MEME,
+            textStyle = StickerTextStyle.MEME_STROKE,
+            isBold = true,
+            isUppercase = true,
+            normalizedX = 0.5f,
+            normalizedY = 0.88f
+        )
+        val updatedList = listOf(topBox, bottomBox)
+        _editorState.value = _editorState.value.copy(
+            textBoxes = updatedList,
+            selectedTextBoxId = bottomBox.id,
+            captionText = bottomText
+        )
+        updateStickerPreview()
+    }
+
+    fun updateTextBoxRotation(id: String, rotationDegrees: Float) {
+        val normRot = ((rotationDegrees + 180f) % 360f) - 180f
+        val updatedList = _editorState.value.textBoxes.map { box ->
+            if (box.id == id) box.copy(rotationDegrees = normRot) else box
+        }
+        _editorState.value = _editorState.value.copy(textBoxes = updatedList)
+        updateStickerPreview()
+    }
+
+    fun rotateSelectedTextBoxBy(degrees: Float) {
+        val selectedId = _editorState.value.selectedTextBoxId ?: return
+        val box = _editorState.value.textBoxes.find { it.id == selectedId } ?: return
+        updateTextBoxRotation(selectedId, box.rotationDegrees + degrees)
+    }
+
+    fun bringTextBoxToFront(id: String) {
+        val box = _editorState.value.textBoxes.find { it.id == id } ?: return
+        pushUndo("Trazer Texto para Frente")
+        val updatedList = _editorState.value.textBoxes.filter { it.id != id } + box
+        _editorState.value = _editorState.value.copy(
+            textBoxes = updatedList,
+            selectedTextBoxId = id
+        )
+        updateStickerPreview()
+    }
+
+    // --- Crop & Transformation Controls ---
+    fun cropCutoutSquare() {
+        val current = cutoutBitmap ?: return
+        pushUndo("Cortar Quadrado 1:1")
+        val cropped = StickerEngine.cropSquare(current)
+        cutoutBitmap = cropped
+        updateStickerPreview()
+    }
+
+    fun trimCutoutBorders() {
+        val current = cutoutBitmap ?: return
+        pushUndo("Ajustar Bordas")
+        val trimmed = StickerEngine.trimTransparentBorders(current)
+        cutoutBitmap = trimmed
+        updateStickerPreview()
+    }
+
+    fun rotateCutout(degrees: Float) {
+        val current = cutoutBitmap ?: return
+        pushUndo("Girar ${degrees.toInt()}°")
+        val rotated = StickerEngine.rotateBitmap(current, degrees)
+        cutoutBitmap = rotated
+        updateStickerPreview()
+    }
+
+    fun flipCutoutHorizontal() {
+        val current = cutoutBitmap ?: return
+        pushUndo("Espelhar Recorte")
+        val flipped = StickerEngine.flipHorizontal(current)
+        cutoutBitmap = flipped
+        updateStickerPreview()
+    }
+
+    // --- Dynamic Overlaid Emojis Management ---
+    private var emojiDragInitialSnapshot: EditorState? = null
+
+    fun addEmojiItem(emoji: String) {
+        pushUndo("Adicionar Emoji $emoji")
+        val count = _editorState.value.emojiItems.size
+        // Posição inicial centralizada com ligeiro offset para múltiplos emojis
+        val offsetX = ((count % 3) - 1) * 0.12f
+        val offsetY = (((count / 3) % 3) - 1) * 0.12f
+        val posX = (0.5f + offsetX).coerceIn(0.2f, 0.8f)
+        val posY = (0.5f + offsetY).coerceIn(0.2f, 0.8f)
+
+        val newItem = StickerEmojiItem(
+            emoji = emoji,
+            normalizedX = posX,
+            normalizedY = posY,
+            scale = 1.0f,
+            rotationDegrees = 0f
+        )
+        val updatedList = _editorState.value.emojiItems + newItem
+        _editorState.value = _editorState.value.copy(
+            emojiItems = updatedList,
+            selectedEmojiId = newItem.id
+        )
+        updateStickerPreview()
+    }
+
+    fun selectEmojiItem(id: String?) {
+        _editorState.value = _editorState.value.copy(selectedEmojiId = id)
+    }
+
+    fun updateSelectedEmoji(transform: (StickerEmojiItem) -> StickerEmojiItem) {
+        val selectedId = _editorState.value.selectedEmojiId ?: return
+        val updatedList = _editorState.value.emojiItems.map { item ->
+            if (item.id == selectedId) transform(item) else item
+        }
+        _editorState.value = _editorState.value.copy(emojiItems = updatedList)
+        updateStickerPreview()
+    }
+
+    fun updateEmojiScale(id: String, scale: Float) {
+        val clamped = scale.coerceIn(0.4f, 3.5f)
+        val updatedList = _editorState.value.emojiItems.map { item ->
+            if (item.id == id) item.copy(scale = clamped) else item
+        }
+        _editorState.value = _editorState.value.copy(emojiItems = updatedList)
+        updateStickerPreview()
+    }
+
+    fun updateEmojiRotation(id: String, rotation: Float) {
+        val normRot = ((rotation + 180f) % 360f) - 180f
+        val updatedList = _editorState.value.emojiItems.map { item ->
+            if (item.id == id) item.copy(rotationDegrees = normRot) else item
+        }
+        _editorState.value = _editorState.value.copy(emojiItems = updatedList)
+        updateStickerPreview()
+    }
+
+    fun rotateSelectedEmojiBy(degrees: Float) {
+        val selectedId = _editorState.value.selectedEmojiId ?: return
+        val item = _editorState.value.emojiItems.find { it.id == selectedId } ?: return
+        updateEmojiRotation(selectedId, item.rotationDegrees + degrees)
+    }
+
+    fun flipSelectedEmoji() {
+        val selectedId = _editorState.value.selectedEmojiId ?: return
+        pushUndo("Espelhar Emoji")
+        val updatedList = _editorState.value.emojiItems.map { item ->
+            if (item.id == selectedId) item.copy(isFlipped = !item.isFlipped) else item
+        }
+        _editorState.value = _editorState.value.copy(emojiItems = updatedList)
+        updateStickerPreview()
+    }
+
+    fun duplicateEmoji(id: String) {
+        val item = _editorState.value.emojiItems.find { it.id == id } ?: return
+        pushUndo("Duplicar Emoji ${item.emoji}")
+        val duplicate = item.copy(
+            id = java.util.UUID.randomUUID().toString(),
+            normalizedX = (item.normalizedX + 0.08f).coerceIn(0.1f, 0.9f),
+            normalizedY = (item.normalizedY + 0.08f).coerceIn(0.1f, 0.9f)
+        )
+        val updatedList = _editorState.value.emojiItems + duplicate
+        _editorState.value = _editorState.value.copy(
+            emojiItems = updatedList,
+            selectedEmojiId = duplicate.id
+        )
+        updateStickerPreview()
+    }
+
+    fun onStartEmojiDrag(id: String) {
+        selectEmojiItem(id)
+        emojiDragInitialSnapshot = _editorState.value
+    }
+
+    fun onMoveEmoji(id: String, newX: Float, newY: Float) {
+        val updated = _editorState.value.emojiItems.map { item ->
+            if (item.id == id) item.copy(normalizedX = newX, normalizedY = newY) else item
+        }
+        _editorState.value = _editorState.value.copy(emojiItems = updated)
+        updateStickerPreview()
+    }
+
+    fun onEndEmojiDrag() {
+        val initial = emojiDragInitialSnapshot
+        if (initial != null && initial.emojiItems != _editorState.value.emojiItems) {
+            undoStack.add(EditorSnapshot(initial, cutoutBitmap, "Mover emoji"))
+            redoStack.clear()
+            _canUndo.value = true
+            _canRedo.value = false
+            _lastActionMessage.value = "Emoji reposicionado"
+        }
+        emojiDragInitialSnapshot = null
+    }
+
+    fun removeSelectedEmoji() {
+        val selectedId = _editorState.value.selectedEmojiId ?: return
+        removeEmoji(selectedId)
+    }
+
+    fun removeEmoji(id: String) {
+        pushUndo("Remover Emoji")
+        val updated = _editorState.value.emojiItems.filter { it.id != id }
+        _editorState.value = _editorState.value.copy(
+            emojiItems = updated,
+            selectedEmojiId = updated.lastOrNull()?.id
+        )
+        updateStickerPreview()
+    }
+
+    fun clearAllEmojis() {
+        if (_editorState.value.emojiItems.isEmpty()) return
+        pushUndo("Limpar Todos os Emojis")
+        _editorState.value = _editorState.value.copy(
+            emojiItems = emptyList(),
+            selectedEmojiId = null
         )
         updateStickerPreview()
     }
@@ -394,7 +777,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             speechBalloonText = state.speechBalloonText,
             emojiText = state.emojiText,
             accessory = state.accessory,
-            textBoxes = state.textBoxes
+            textBoxes = state.textBoxes,
+            emojiItems = state.emojiItems
         )
         previewStickerBitmap = rendered
         _previewStickerBitmapFlow.value = rendered

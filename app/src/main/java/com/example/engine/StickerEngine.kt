@@ -18,6 +18,7 @@ import android.graphics.RectF
 import android.graphics.Typeface
 import android.net.Uri
 import android.os.Build
+import com.example.model.StickerEmojiItem
 import com.example.model.StickerFontFamily
 import com.example.model.StickerTextAlign
 import com.example.model.StickerTextBox
@@ -432,7 +433,8 @@ object StickerEngine {
         speechBalloonText: String = "",
         emojiText: String = "",
         accessory: String = "NONE",
-        textBoxes: List<StickerTextBox> = emptyList()
+        textBoxes: List<StickerTextBox> = emptyList(),
+        emojiItems: List<StickerEmojiItem> = emptyList()
     ): Bitmap {
         val size = 512
         val finalBitmap = Bitmap.createBitmap(size, size, Bitmap.Config.ARGB_8888)
@@ -484,8 +486,27 @@ object StickerEngine {
             drawSpeechBalloon(canvas, speechBalloonText, size)
         }
 
-        // 6. Emoji if any
-        if (emojiText.isNotBlank()) {
+        // 6. Overlaid emojis with custom position, scale, and rotation
+        if (emojiItems.isNotEmpty()) {
+            val emojiPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                textSize = 64f
+                textAlign = Paint.Align.CENTER
+            }
+            for (item in emojiItems) {
+                if (item.emoji.isNotBlank()) {
+                    canvas.save()
+                    val posX = item.normalizedX * size
+                    val posY = item.normalizedY * size
+                    canvas.translate(posX, posY)
+                    canvas.rotate(item.rotationDegrees)
+                    val scaleX = if (item.isFlipped) -item.scale else item.scale
+                    canvas.scale(scaleX, item.scale)
+                    // Draw centered at origin (vertical alignment adjustment for emoji font)
+                    canvas.drawText(item.emoji, 0f, 22f, emojiPaint)
+                    canvas.restore()
+                }
+            }
+        } else if (emojiText.isNotBlank()) {
             val emojiPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
                 textSize = 64f
                 textAlign = Paint.Align.CENTER
@@ -638,6 +659,8 @@ object StickerEngine {
             StickerFontFamily.SERIF -> Typeface.SERIF
             StickerFontFamily.MONOSPACE -> Typeface.MONOSPACE
             StickerFontFamily.CURSIVE -> Typeface.create("cursive", Typeface.NORMAL)
+            StickerFontFamily.IMPACT_MEME -> Typeface.create("sans-serif-condensed", Typeface.BOLD)
+            StickerFontFamily.COMIC -> Typeface.create("casual", Typeface.BOLD)
         }
 
         val styleFlag = when {
@@ -819,4 +842,204 @@ object StickerEngine {
 
         file
     }
+
+    /**
+     * Corta a imagem no formato quadrado 1:1 centralizado
+     */
+    fun cropSquare(bitmap: Bitmap): Bitmap {
+        val width = bitmap.width
+        val height = bitmap.height
+        if (width == height) return bitmap
+
+        val newSize = min(width, height)
+        val x = (width - newSize) / 2
+        val y = (height - newSize) / 2
+        return Bitmap.createBitmap(bitmap, x, y, newSize, newSize)
+    }
+
+    /**
+     * Gira o bitmap pelo ângulo especificado em graus
+     */
+    fun rotateBitmap(bitmap: Bitmap, degrees: Float): Bitmap {
+        if (degrees % 360f == 0f) return bitmap
+        val matrix = android.graphics.Matrix().apply {
+            postRotate(degrees)
+        }
+        return Bitmap.createBitmap(bitmap, 0, 0, bitmap.width, bitmap.height, matrix, true)
+    }
+
+    /**
+     * Espelha horizontalmente o bitmap
+     */
+    fun flipHorizontal(bitmap: Bitmap): Bitmap {
+        val matrix = android.graphics.Matrix().apply {
+            preScale(-1f, 1f)
+        }
+        return Bitmap.createBitmap(bitmap, 0, 0, bitmap.width, bitmap.height, matrix, true)
+    }
+
+    /**
+     * Remove bordas excessivas 100% transparentes ao redor do recorte da imagem
+     */
+    fun trimTransparentBorders(bitmap: Bitmap, tolerance: Int = 10): Bitmap {
+        val width = bitmap.width
+        val height = bitmap.height
+        val pixels = IntArray(width * height)
+        bitmap.getPixels(pixels, 0, width, 0, 0, width, height)
+
+        var minX = width
+        var minY = height
+        var maxX = -1
+        var maxY = -1
+
+        for (y in 0 until height) {
+            val rowOffset = y * width
+            for (x in 0 until width) {
+                val alpha = (pixels[rowOffset + x] ushr 24) and 0xFF
+                if (alpha > tolerance) {
+                    if (x < minX) minX = x
+                    if (x > maxX) maxX = x
+                    if (y < minY) minY = y
+                    if (y > maxY) maxY = y
+                }
+            }
+        }
+
+        if (maxX < minX || maxY < minY) {
+            // Imagem totalmente transparente
+            return bitmap
+        }
+
+        // Adiciona uma pequena margem de segurança de 4 pixels
+        val pad = 4
+        val left = max(0, minX - pad)
+        val top = max(0, minY - pad)
+        val right = min(width - 1, maxX + pad)
+        val bottom = min(height - 1, maxY + pad)
+        val cropW = right - left + 1
+        val cropH = bottom - top + 1
+
+        return Bitmap.createBitmap(bitmap, left, top, cropW, cropH)
+    }
+
+    /**
+     * Camada de processamento de imagem pós-captura para filtros básicos:
+     * - Preto e branco (Grayscale)
+     * - Sépia (Sepia tone)
+     * - Brilho contínuo (Brightness adjustment via ColorMatrix)
+     * - Contraste (Contrast adjustment)
+     *
+     * @param source Imagem capturada da câmera ou galeria
+     * @param filterId Identificador do filtro ("NONE", "GRAYSCALE", "SEPIA", "BRIGHT_BOOST", "HIGH_CONTRAST", "VINTAGE")
+     * @param brightnessOffset Deslocamento de brilho (-80f a +80f)
+     * @param contrastFactor Fator de contraste (0.5f a 2.0f, onde 1.0f é neutro)
+     */
+    fun processCapturedImage(
+        source: Bitmap,
+        filterId: String = "NONE",
+        brightnessOffset: Float = 0f,
+        contrastFactor: Float = 1.0f
+    ): Bitmap {
+        if (filterId.equals("NONE", ignoreCase = true) && brightnessOffset == 0f && contrastFactor == 1.0f) {
+            return source
+        }
+
+        val output = Bitmap.createBitmap(source.width, source.height, Bitmap.Config.ARGB_8888)
+        val canvas = Canvas(output)
+        val paint = Paint(Paint.ANTI_ALIAS_FLAG)
+
+        // Matriz base do filtro de cor
+        val colorMatrix = ColorMatrix()
+
+        when (filterId.uppercase()) {
+            "GRAYSCALE", "PRETO_BRANCO", "PB", "BLACK_WHITE" -> {
+                colorMatrix.setSaturation(0f)
+            }
+            "SEPIA" -> {
+                val sepia = ColorMatrix(
+                    floatArrayOf(
+                        0.393f, 0.769f, 0.189f, 0f, 0f,
+                        0.349f, 0.686f, 0.168f, 0f, 0f,
+                        0.272f, 0.534f, 0.131f, 0f, 0f,
+                        0f, 0f, 0f, 1f, 0f
+                    )
+                )
+                colorMatrix.set(sepia)
+            }
+            "BRIGHT_BOOST" -> {
+                val boost = ColorMatrix(
+                    floatArrayOf(
+                        1.08f, 0f, 0f, 0f, 35f,
+                        0f, 1.08f, 0f, 0f, 35f,
+                        0f, 0f, 1.08f, 0f, 35f,
+                        0f, 0f, 0f, 1f, 0f
+                    )
+                )
+                colorMatrix.set(boost)
+            }
+            "HIGH_CONTRAST" -> {
+                val contrastMat = ColorMatrix(
+                    floatArrayOf(
+                        1.4f, 0f, 0f, 0f, -25f,
+                        0f, 1.4f, 0f, 0f, -25f,
+                        0f, 0f, 1.4f, 0f, -25f,
+                        0f, 0f, 0f, 1f, 0f
+                    )
+                )
+                colorMatrix.set(contrastMat)
+            }
+            "VINTAGE" -> {
+                val vintage = ColorMatrix(
+                    floatArrayOf(
+                        0.95f, 0.05f, 0f, 0f, 15f,
+                        0f, 0.85f, 0.05f, 0f, 10f,
+                        0f, 0f, 0.65f, 0f, -5f,
+                        0f, 0f, 0f, 1f, 0f
+                    )
+                )
+                colorMatrix.set(vintage)
+            }
+        }
+
+        // Aplica o ajuste contínuo de brilho e contraste
+        if (brightnessOffset != 0f || contrastFactor != 1.0f) {
+            val scale = contrastFactor
+            val translate = brightnessOffset + (1f - scale) * 128f
+            val adjustMatrix = ColorMatrix(
+                floatArrayOf(
+                    scale, 0f, 0f, 0f, translate,
+                    0f, scale, 0f, 0f, translate,
+                    0f, 0f, scale, 0f, translate,
+                    0f, 0f, 0f, 1f, 0f
+                )
+            )
+            colorMatrix.postConcat(adjustMatrix)
+        }
+
+        paint.colorFilter = ColorMatrixColorFilter(colorMatrix)
+        canvas.drawBitmap(source, 0f, 0f, paint)
+        return output
+    }
+
+    /**
+     * Aplica filtro Preto e Branco (P&B)
+     */
+    fun applyBlackAndWhite(source: Bitmap): Bitmap {
+        return processCapturedImage(source, filterId = "GRAYSCALE")
+    }
+
+    /**
+     * Aplica filtro Sépia
+     */
+    fun applySepia(source: Bitmap): Bitmap {
+        return processCapturedImage(source, filterId = "SEPIA")
+    }
+
+    /**
+     * Ajusta o brilho da imagem (-80f a +80f)
+     */
+    fun adjustBrightness(source: Bitmap, brightnessOffset: Float): Bitmap {
+        return processCapturedImage(source, filterId = "NONE", brightnessOffset = brightnessOffset)
+    }
 }
+

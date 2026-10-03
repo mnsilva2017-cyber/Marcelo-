@@ -5,6 +5,7 @@ import android.graphics.Bitmap
 import android.graphics.Color
 import androidx.test.core.app.ApplicationProvider
 import com.example.engine.StickerEngine
+import com.example.model.StickerFontFamily
 import com.example.ui.MainViewModel
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -119,5 +120,139 @@ class UndoRedoSystemTest {
         viewModel.redo()
         val redoY = viewModel.editorState.value.textBoxes.first { it.id == boxId }.normalizedY
         assertEquals(0.3f, redoY, 0.01f)
+    }
+
+    @Test
+    fun `test emoji overlay addition, scaling, rotation, and undo-redo`() {
+        assertEquals(0, viewModel.editorState.value.emojiItems.size)
+
+        // Add first emoji
+        viewModel.addEmojiItem("🔥")
+        assertEquals(1, viewModel.editorState.value.emojiItems.size)
+        val emoji1 = viewModel.editorState.value.emojiItems[0]
+        assertEquals("🔥", emoji1.emoji)
+        assertEquals(1.0f, emoji1.scale)
+        assertEquals(0f, emoji1.rotationDegrees)
+        assertTrue(viewModel.canUndo.value)
+
+        // Scale emoji
+        viewModel.updateEmojiScale(emoji1.id, 1.8f)
+        val scaled = viewModel.editorState.value.emojiItems.first { it.id == emoji1.id }
+        assertEquals(1.8f, scaled.scale)
+
+        // Rotate emoji
+        viewModel.updateEmojiRotation(emoji1.id, 45f)
+        val rotated = viewModel.editorState.value.emojiItems.first { it.id == emoji1.id }
+        assertEquals(45f, rotated.rotationDegrees)
+
+        // Flip emoji
+        viewModel.selectEmojiItem(emoji1.id)
+        viewModel.flipSelectedEmoji()
+        val flipped = viewModel.editorState.value.emojiItems.first { it.id == emoji1.id }
+        assertTrue(flipped.isFlipped)
+
+        // Duplicate emoji
+        viewModel.duplicateEmoji(emoji1.id)
+        assertEquals(2, viewModel.editorState.value.emojiItems.size)
+        assertEquals("🔥", viewModel.editorState.value.emojiItems[1].emoji)
+
+        // Undo duplication
+        viewModel.undo()
+        assertEquals(1, viewModel.editorState.value.emojiItems.size)
+
+        // Redo duplication
+        viewModel.redo()
+        assertEquals(2, viewModel.editorState.value.emojiItems.size)
+
+        // Remove emoji
+        viewModel.removeSelectedEmoji()
+        assertEquals(1, viewModel.editorState.value.emojiItems.size)
+
+        // Undo deletion
+        viewModel.undo()
+        assertEquals(2, viewModel.editorState.value.emojiItems.size)
+    }
+
+    @Test
+    fun `test customizable text layers font color size and meme template`() {
+        // Create Meme Template (Top + Bottom)
+        viewModel.addMemeTemplateTextBoxes("TOPO DO MEME", "BASE DO MEME")
+        assertEquals(2, viewModel.editorState.value.textBoxes.size)
+        val topBox = viewModel.editorState.value.textBoxes[0]
+        val bottomBox = viewModel.editorState.value.textBoxes[1]
+
+        assertEquals("TOPO DO MEME", topBox.text)
+        assertEquals("BASE DO MEME", bottomBox.text)
+        assertEquals(StickerFontFamily.IMPACT_MEME, topBox.fontFamily)
+        assertEquals(42f, topBox.fontSize)
+
+        // Customize font of top box to Comic
+        viewModel.selectTextBox(topBox.id)
+        viewModel.updateSelectedTextBox { it.copy(fontFamily = StickerFontFamily.COMIC) }
+        val updatedTop = viewModel.editorState.value.textBoxes.first { it.id == topBox.id }
+        assertEquals(StickerFontFamily.COMIC, updatedTop.fontFamily)
+
+        // Customize color
+        viewModel.updateSelectedTextBox { it.copy(textColor = Color.YELLOW, strokeColor = Color.BLACK) }
+        val coloredTop = viewModel.editorState.value.textBoxes.first { it.id == topBox.id }
+        assertEquals(Color.YELLOW, coloredTop.textColor)
+        assertEquals(Color.BLACK, coloredTop.strokeColor)
+
+        // Customize font size
+        viewModel.updateSelectedTextBox { it.copy(fontSize = 52f) }
+        val resizedTop = viewModel.editorState.value.textBoxes.first { it.id == topBox.id }
+        assertEquals(52f, resizedTop.fontSize)
+
+        // Customize rotation
+        viewModel.updateTextBoxRotation(topBox.id, 15f)
+        val rotatedTop = viewModel.editorState.value.textBoxes.first { it.id == topBox.id }
+        assertEquals(15f, rotatedTop.rotationDegrees)
+
+        // Duplicate layer
+        viewModel.duplicateTextBox(topBox.id)
+        assertEquals(3, viewModel.editorState.value.textBoxes.size)
+
+        // Undo duplication
+        viewModel.undo()
+        assertEquals(2, viewModel.editorState.value.textBoxes.size)
+    }
+
+    @Test
+    fun `test post-capture image processing layer filters black and white sepia and brightness`() {
+        val original = Bitmap.createBitmap(100, 100, Bitmap.Config.ARGB_8888)
+        original.eraseColor(Color.rgb(200, 100, 50))
+
+        // Neutral returns the same bitmap without allocating redundant output
+        val neutral = StickerEngine.processCapturedImage(original, filterId = "NONE", brightnessOffset = 0f)
+        assertEquals(original, neutral)
+
+        // Black and white (Grayscale)
+        val bw = StickerEngine.applyBlackAndWhite(original)
+        assertNotNull(bw)
+        assertEquals(100, bw.width)
+        assertEquals(100, bw.height)
+
+        // Sepia
+        val sepia = StickerEngine.applySepia(original)
+        assertNotNull(sepia)
+        assertEquals(100, sepia.width)
+        assertEquals(100, sepia.height)
+
+        // Brightness adjustment
+        val brightened = StickerEngine.adjustBrightness(original, brightnessOffset = 40f)
+        assertNotNull(brightened)
+        assertEquals(100, brightened.width)
+        assertEquals(100, brightened.height)
+
+        // Combined filter + brightness
+        val combined = StickerEngine.processCapturedImage(
+            source = original,
+            filterId = "GRAYSCALE",
+            brightnessOffset = 25f,
+            contrastFactor = 1.2f
+        )
+        assertNotNull(combined)
+        assertEquals(100, combined.width)
+        assertEquals(100, combined.height)
     }
 }

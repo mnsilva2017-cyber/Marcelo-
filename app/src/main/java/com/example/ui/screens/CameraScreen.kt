@@ -21,28 +21,40 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.lazy.LazyRow
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.AutoAwesome
+import androidx.compose.material.icons.filled.Brightness6
 import androidx.compose.material.icons.filled.CameraAlt
 import androidx.compose.material.icons.filled.Cameraswitch
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.PhotoLibrary
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Shield
+import androidx.compose.material.icons.filled.Tune
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.FilterChip
+import androidx.compose.material3.FilterChipDefaults
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.Slider
+import androidx.compose.material3.SliderDefaults
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -59,6 +71,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
+import com.example.engine.StickerEngine
 import com.example.ui.MainViewModel
 import com.example.ui.Screen
 import com.example.ui.components.CameraPreviewComponent
@@ -108,8 +121,26 @@ fun CameraScreen(
         contract = ActivityResultContracts.GetContent()
     ) { uri: Uri? ->
         if (uri != null) {
-            viewModel.onPhotoUriSelected(uri)
+            viewModel.loadBitmapFromUri(uri) { bitmap ->
+                capturedBitmap = bitmap
+            }
         }
+    }
+
+    // Post-capture image processing layer states
+    var postCaptureFilter by remember { mutableStateOf("NONE") }
+    var postCaptureBrightness by remember { mutableFloatStateOf(0f) }
+    var postCaptureContrast by remember { mutableFloatStateOf(1.0f) }
+
+    // Live processed bitmap computation
+    val processedBitmap = remember(capturedBitmap, postCaptureFilter, postCaptureBrightness, postCaptureContrast) {
+        val bmp = capturedBitmap ?: return@remember null
+        StickerEngine.processCapturedImage(
+            source = bmp,
+            filterId = postCaptureFilter,
+            brightnessOffset = postCaptureBrightness,
+            contrastFactor = postCaptureContrast
+        )
     }
 
     val scrollState = rememberScrollState()
@@ -140,7 +171,9 @@ fun CameraScreen(
         Spacer(modifier = Modifier.height(20.dp))
 
         if (capturedBitmap != null) {
-            // Confirmation Screen ("USAR ESTA FOTO" ou "TIRAR OUTRA")
+            val displayBitmap = processedBitmap ?: capturedBitmap!!
+
+            // Confirmation & Filtered Preview Screen
             Card(
                 shape = RoundedCornerShape(20.dp),
                 colors = CardDefaults.cardColors(containerColor = DarkSurface),
@@ -152,22 +185,51 @@ fun CameraScreen(
             ) {
                 Box(modifier = Modifier.fillMaxSize()) {
                     Image(
-                        bitmap = capturedBitmap!!.asImageBitmap(),
-                        contentDescription = "Foto capturada",
+                        bitmap = displayBitmap.asImageBitmap(),
+                        contentDescription = "Foto capturada com filtros",
                         contentScale = ContentScale.Crop,
                         modifier = Modifier.fillMaxSize()
                     )
+
+                    // Badge showing active filter / adjustments
+                    val filterBadgeText = when {
+                        postCaptureFilter == "GRAYSCALE" -> "Filtro: Preto e Branco"
+                        postCaptureFilter == "SEPIA" -> "Filtro: Sépia Vintage"
+                        postCaptureFilter == "BRIGHT_BOOST" -> "Filtro: Brilho Realçado"
+                        postCaptureFilter == "HIGH_CONTRAST" -> "Filtro: Alto Contraste"
+                        postCaptureFilter == "VINTAGE" -> "Filtro: Retrô Vintage"
+                        postCaptureBrightness != 0f -> "Brilho: ${if (postCaptureBrightness > 0) "+" else ""}${postCaptureBrightness.toInt()}"
+                        else -> "Foto Original"
+                    }
+
                     Surface(
-                        color = Color.Black.copy(alpha = 0.6f),
+                        shape = RoundedCornerShape(12.dp),
+                        color = Color.Black.copy(alpha = 0.75f),
+                        border = BorderStroke(1.dp, WhatsAppGreenLight.copy(alpha = 0.6f)),
+                        modifier = Modifier
+                            .align(Alignment.TopEnd)
+                            .padding(10.dp)
+                    ) {
+                        Text(
+                            text = filterBadgeText,
+                            color = WhatsAppGreenLight,
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.Bold,
+                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
+                        )
+                    }
+
+                    Surface(
+                        color = Color.Black.copy(alpha = 0.65f),
                         shape = RoundedCornerShape(bottomStart = 18.dp, bottomEnd = 18.dp),
                         modifier = Modifier
                             .align(Alignment.BottomCenter)
                             .fillMaxWidth()
                     ) {
                         Text(
-                            text = "Foto pronta para recorte e personalização!",
+                            text = "Ajuste os filtros abaixo antes de recortar a figurinha",
                             color = Color.White,
-                            fontSize = 12.sp,
+                            fontSize = 11.sp,
                             fontWeight = FontWeight.Medium,
                             textAlign = TextAlign.Center,
                             modifier = Modifier.padding(vertical = 8.dp)
@@ -176,7 +238,196 @@ fun CameraScreen(
                 }
             }
 
-            Spacer(modifier = Modifier.height(24.dp))
+            Spacer(modifier = Modifier.height(16.dp))
+
+            // --- Camada de Processamento de Imagem (Filtros Básicos & Brilho) ---
+            Card(
+                shape = RoundedCornerShape(16.dp),
+                colors = CardDefaults.cardColors(containerColor = DarkSurfaceElevated),
+                border = BorderStroke(1.dp, Color(0xFF334155)),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .testTag("post_capture_filter_panel")
+            ) {
+                Column(modifier = Modifier.padding(14.dp)) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Icon(
+                                Icons.Default.Tune,
+                                contentDescription = null,
+                                tint = WhatsAppGreenLight,
+                                modifier = Modifier.size(18.dp)
+                            )
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text(
+                                text = "Filtros de Imagem Pós-Captura",
+                                color = Color.White,
+                                fontWeight = FontWeight.Bold,
+                                fontSize = 13.sp
+                            )
+                        }
+
+                        // Botão para resetar filtros
+                        if (postCaptureFilter != "NONE" || postCaptureBrightness != 0f) {
+                            Text(
+                                text = "Resetar",
+                                color = Color.Gray,
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.Bold,
+                                modifier = Modifier
+                                    .clip(RoundedCornerShape(6.dp))
+                                    .clickable {
+                                        postCaptureFilter = "NONE"
+                                        postCaptureBrightness = 0f
+                                        postCaptureContrast = 1.0f
+                                    }
+                                    .padding(horizontal = 6.dp, vertical = 2.dp)
+                                    .testTag("btn_reset_post_capture_filters")
+                            )
+                        }
+                    }
+
+                    Spacer(modifier = Modifier.height(10.dp))
+
+                    // 1. Filtros Rápidos (P&B, Sépia, Brilho, Original)
+                    val filters = listOf(
+                        "NONE" to "📸 Original",
+                        "GRAYSCALE" to "🖤 Preto e Branco",
+                        "SEPIA" to "📜 Sépia",
+                        "BRIGHT_BOOST" to "☀️ Realçar Luz",
+                        "HIGH_CONTRAST" to "⚡ Alto Contraste",
+                        "VINTAGE" to "📷 Vintage"
+                    )
+
+                    LazyRow(
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        items(filters) { (id, label) ->
+                            val isSelected = postCaptureFilter == id
+                            FilterChip(
+                                selected = isSelected,
+                                onClick = { postCaptureFilter = id },
+                                label = {
+                                    Text(
+                                        text = label,
+                                        fontSize = 11.sp,
+                                        fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal
+                                    )
+                                },
+                                colors = FilterChipDefaults.filterChipColors(
+                                    selectedContainerColor = WhatsAppGreen,
+                                    selectedLabelColor = Color.White,
+                                    containerColor = DarkSurface,
+                                    labelColor = Color.LightGray
+                                ),
+                                modifier = Modifier.height(32.dp).testTag("filter_chip_$id")
+                            )
+                        }
+                    }
+
+                    Spacer(modifier = Modifier.height(14.dp))
+
+                    // 2. Ajuste Fino de Brilho (Slider contínuo + Botões de precisão)
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Icon(
+                                Icons.Default.Brightness6,
+                                contentDescription = null,
+                                tint = Color.LightGray,
+                                modifier = Modifier.size(16.dp)
+                            )
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text(
+                                text = "Ajuste de Brilho:",
+                                color = Color.White,
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight.Medium
+                            )
+                        }
+
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            OutlinedButton(
+                                onClick = {
+                                    postCaptureBrightness = (postCaptureBrightness - 10f).coerceAtLeast(-80f)
+                                },
+                                shape = RoundedCornerShape(6.dp),
+                                contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 6.dp, vertical = 2.dp),
+                                modifier = Modifier.height(26.dp)
+                            ) {
+                                Text("-", fontSize = 13.sp, color = Color.White, fontWeight = FontWeight.Bold)
+                            }
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text(
+                                text = "${if (postCaptureBrightness > 0) "+" else ""}${postCaptureBrightness.toInt()}",
+                                color = if (postCaptureBrightness != 0f) WhatsAppGreenLight else Color.LightGray,
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight.Bold
+                            )
+                            Spacer(modifier = Modifier.width(6.dp))
+                            OutlinedButton(
+                                onClick = {
+                                    postCaptureBrightness = (postCaptureBrightness + 10f).coerceAtMost(80f)
+                                },
+                                shape = RoundedCornerShape(6.dp),
+                                contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 6.dp, vertical = 2.dp),
+                                modifier = Modifier.height(26.dp)
+                            ) {
+                                Text("+", fontSize = 13.sp, color = Color.White, fontWeight = FontWeight.Bold)
+                            }
+                        }
+                    }
+
+                    Slider(
+                        value = postCaptureBrightness,
+                        onValueChange = { postCaptureBrightness = it },
+                        valueRange = -80f..80f,
+                        colors = SliderDefaults.colors(
+                            thumbColor = WhatsAppGreenLight,
+                            activeTrackColor = WhatsAppGreen
+                        ),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .testTag("slider_post_capture_brightness")
+                    )
+
+                    // Presets de Brilho
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        listOf(
+                            "-30 (Sombreado)" to -30f,
+                            "0 (Neutro)" to 0f,
+                            "+25 (Mais Luz)" to 25f,
+                            "+50 (Super Claro)" to 50f
+                        ).forEach { (label, value) ->
+                            FilterChip(
+                                selected = kotlin.math.abs(postCaptureBrightness - value) < 5f,
+                                onClick = { postCaptureBrightness = value },
+                                label = { Text(label, fontSize = 10.sp) },
+                                colors = FilterChipDefaults.filterChipColors(
+                                    selectedContainerColor = WhatsAppGreen,
+                                    selectedLabelColor = Color.White,
+                                    containerColor = DarkSurface,
+                                    labelColor = Color.LightGray
+                                ),
+                                modifier = Modifier.weight(1f).height(28.dp)
+                            )
+                        }
+                    }
+                }
+            }
+
+            Spacer(modifier = Modifier.height(20.dp))
 
             // Action buttons: USAR ESTA FOTO ou TIRAR OUTRA
             Column(
@@ -185,7 +436,8 @@ fun CameraScreen(
             ) {
                 Button(
                     onClick = {
-                        capturedBitmap?.let { viewModel.onPhotoSelected(it) }
+                        val finalPhoto = processedBitmap ?: capturedBitmap!!
+                        viewModel.onPhotoSelected(finalPhoto)
                     },
                     colors = ButtonDefaults.buttonColors(containerColor = WhatsAppGreen),
                     shape = RoundedCornerShape(14.dp),
@@ -197,7 +449,7 @@ fun CameraScreen(
                     Icon(Icons.Default.Check, contentDescription = null, tint = Color.White)
                     Spacer(modifier = Modifier.width(8.dp))
                     Text(
-                        text = "USAR ESTA FOTO",
+                        text = if (postCaptureFilter != "NONE" || postCaptureBrightness != 0f) "USAR FOTO COM FILTRO" else "USAR ESTA FOTO",
                         fontWeight = FontWeight.Black,
                         fontSize = 15.sp,
                         color = Color.White
@@ -207,6 +459,9 @@ fun CameraScreen(
                 OutlinedButton(
                     onClick = {
                         capturedBitmap = null
+                        postCaptureFilter = "NONE"
+                        postCaptureBrightness = 0f
+                        postCaptureContrast = 1.0f
                     },
                     border = BorderStroke(1.dp, Color.Gray),
                     shape = RoundedCornerShape(14.dp),

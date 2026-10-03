@@ -10,11 +10,13 @@ import java.util.UUID
  * Famílias de fontes disponíveis no editor de texto
  */
 enum class StickerFontFamily(val displayName: String, val fontFamily: FontFamily) {
+    IMPACT_MEME("Impact (Meme)", FontFamily.SansSerif),
     DEFAULT("Padrão", FontFamily.Default),
     SANS_SERIF("Sans-Serif", FontFamily.SansSerif),
     SERIF("Serif Clássico", FontFamily.Serif),
     MONOSPACE("Monospace (Código)", FontFamily.Monospace),
-    CURSIVE("Cursiva Elegante", FontFamily.Cursive)
+    CURSIVE("Cursiva Elegante", FontFamily.Cursive),
+    COMIC("Comic / Divertido", FontFamily.Default)
 }
 
 /**

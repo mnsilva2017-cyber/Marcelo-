@@ -41,6 +41,7 @@ import androidx.compose.material.icons.filled.ChatBubble
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.ColorLens
+import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.Crop
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Download
@@ -112,6 +113,7 @@ import com.example.model.StickerTextStyle
 import com.example.ui.MainViewModel
 import com.example.ui.Screen
 import com.example.ui.components.CheckerboardBackground
+import com.example.ui.components.InteractiveEmojisOverlay
 import com.example.ui.components.InteractiveTextBoxesOverlay
 import com.example.ui.theme.DarkBackground
 import com.example.ui.theme.DarkSurface
@@ -298,6 +300,23 @@ fun EditorScreen(
                         onDragStart = { id -> viewModel.onStartTextBoxDrag(id) },
                         onMoveTextBox = { id, newX, newY -> viewModel.onMoveTextBox(id, newX, newY) },
                         onDragEnd = { viewModel.onEndTextBoxDrag() },
+                        onDeleteTextBox = { id -> viewModel.removeTextBox(id) },
+                        onDuplicateTextBox = { id -> viewModel.duplicateTextBox(id) },
+                        modifier = Modifier.fillMaxSize()
+                    )
+                }
+
+                // Interactive Emoji Drag, Scale, Rotate & Overlay Layer
+                if (editorState.emojiItems.isNotEmpty()) {
+                    InteractiveEmojisOverlay(
+                        emojiItems = editorState.emojiItems,
+                        selectedId = editorState.selectedEmojiId,
+                        onSelectEmoji = { id -> viewModel.selectEmojiItem(id) },
+                        onDragStart = { id -> viewModel.onStartEmojiDrag(id) },
+                        onMoveEmoji = { id, newX, newY -> viewModel.onMoveEmoji(id, newX, newY) },
+                        onDragEnd = { viewModel.onEndEmojiDrag() },
+                        onDeleteEmoji = { id -> viewModel.removeEmoji(id) },
+                        onDuplicateEmoji = { id -> viewModel.duplicateEmoji(id) },
                         modifier = Modifier.fillMaxSize()
                     )
                 }
@@ -435,7 +454,7 @@ fun EditorScreen(
                     5 -> BackgroundToolPanel(viewModel, editorState.backgroundType)
                     6 -> AccessoriesToolPanel(viewModel, editorState.accessory)
                     7 -> SpeechBalloonPanel(viewModel, editorState.speechBalloonText)
-                    8 -> EmojiToolPanel(viewModel, editorState.emojiText)
+                    8 -> EmojiToolPanel(viewModel, editorState)
                 }
             }
         }
@@ -608,57 +627,141 @@ fun CropToolPanel(viewModel: MainViewModel) {
 
 @Composable
 fun TextToolPanel(viewModel: MainViewModel, editorState: com.example.ui.EditorState) {
+    val canUndo by viewModel.canUndo.collectAsState()
+    val canRedo by viewModel.canRedo.collectAsState()
+
     val selectedBox = editorState.textBoxes.find { it.id == editorState.selectedTextBoxId }
         ?: editorState.textBoxes.firstOrNull()
 
     val quickPhrases = listOf(
         "KKKKKK", "EU AVISEI", "NÃO ACREDITO!", "BOM DIA",
-        "BOA NOITE", "TÔ CHEGANDO", "DEPOIS EU VEJO", "MEU DEUS", "OLHA ISSO"
+        "BOA NOITE", "TÔ CHEGANDO", "DEPOIS EU VEJO", "MEU DEUS", "OLHA ISSO", "SOCORRO", "QUEM NUNCA?"
     )
 
     val textColors = listOf(
         AndroidColor.WHITE to "Branco",
         AndroidColor.YELLOW to "Amarelo",
+        AndroidColor.parseColor("#00E676") to "Verde Neon",
         AndroidColor.RED to "Vermelho",
-        AndroidColor.GREEN to "Verde",
         AndroidColor.CYAN to "Ciano",
-        AndroidColor.MAGENTA to "Rosa",
-        AndroidColor.BLACK to "Preto",
+        AndroidColor.MAGENTA to "Rosa Choque",
         AndroidColor.parseColor("#FFA500") to "Laranja",
+        AndroidColor.parseColor("#FFD700") to "Dourado",
         AndroidColor.parseColor("#9C27B0") to "Roxo",
-        AndroidColor.parseColor("#00E676") to "Verde Neon"
+        AndroidColor.parseColor("#38BDF8") to "Azul Celeste",
+        AndroidColor.BLACK to "Preto"
     )
 
-    Column {
-        // Header: Add Text Box button and title
+    val strokeColors = listOf(
+        AndroidColor.BLACK to "Preto",
+        AndroidColor.WHITE to "Branco",
+        AndroidColor.YELLOW to "Amarelo",
+        AndroidColor.parseColor("#00E676") to "Verde Neon",
+        AndroidColor.RED to "Vermelho",
+        AndroidColor.TRANSPARENT to "Sem Borda"
+    )
+
+    Column(modifier = Modifier.fillMaxWidth()) {
+        // 1. Header: Title, Undo/Redo & Actions
         Row(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically
         ) {
-            Text(
-                text = "Caixas de Texto (${editorState.textBoxes.size})",
-                fontWeight = FontWeight.Bold,
-                color = Color.White,
-                fontSize = 14.sp
-            )
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(
+                    text = "CAMADAS DE TEXTO & MEMES",
+                    fontWeight = FontWeight.Bold,
+                    color = Color.White,
+                    fontSize = 13.sp
+                )
+                if (editorState.textBoxes.isNotEmpty()) {
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Surface(
+                        shape = RoundedCornerShape(10.dp),
+                        color = WhatsAppGreen.copy(alpha = 0.2f),
+                        border = BorderStroke(1.dp, WhatsAppGreenLight)
+                    ) {
+                        Text(
+                            text = "${editorState.textBoxes.size}",
+                            color = WhatsAppGreenLight,
+                            fontSize = 10.sp,
+                            fontWeight = FontWeight.Bold,
+                            modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                        )
+                    }
+                }
+            }
 
+            Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                IconButton(
+                    onClick = { viewModel.undo() },
+                    enabled = canUndo,
+                    colors = IconButtonDefaults.iconButtonColors(
+                        contentColor = Color.White,
+                        disabledContentColor = Color.Gray.copy(alpha = 0.35f)
+                    ),
+                    modifier = Modifier.size(32.dp).testTag("btn_text_undo")
+                ) {
+                    Icon(
+                        Icons.AutoMirrored.Filled.Undo,
+                        contentDescription = "Desfazer",
+                        modifier = Modifier.size(16.dp)
+                    )
+                }
+
+                IconButton(
+                    onClick = { viewModel.redo() },
+                    enabled = canRedo,
+                    colors = IconButtonDefaults.iconButtonColors(
+                        contentColor = Color.White,
+                        disabledContentColor = Color.Gray.copy(alpha = 0.35f)
+                    ),
+                    modifier = Modifier.size(32.dp).testTag("btn_text_redo")
+                ) {
+                    Icon(
+                        Icons.AutoMirrored.Filled.Redo,
+                        contentDescription = "Refazer",
+                        modifier = Modifier.size(16.dp)
+                    )
+                }
+            }
+        }
+
+        Spacer(modifier = Modifier.height(8.dp))
+
+        // Quick Action Buttons: Nova Caixa + Template Meme
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
             Button(
                 onClick = { viewModel.addTextBox() },
                 colors = ButtonDefaults.buttonColors(containerColor = WhatsAppGreen),
                 shape = RoundedCornerShape(8.dp),
-                modifier = Modifier.testTag("btn_add_text_box")
+                modifier = Modifier.weight(1f).height(36.dp).testTag("btn_add_text_box")
             ) {
                 Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(16.dp))
                 Spacer(modifier = Modifier.width(4.dp))
-                Text("Nova Caixa", fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                Text("Nova Camada", fontSize = 11.sp, fontWeight = FontWeight.Bold)
+            }
+
+            OutlinedButton(
+                onClick = { viewModel.addMemeTemplateTextBoxes() },
+                shape = RoundedCornerShape(8.dp),
+                border = BorderStroke(1.dp, ProAccentPink),
+                modifier = Modifier.weight(1.2f).height(36.dp).testTag("btn_meme_template_top_bottom")
+            ) {
+                Text("✨ Template Meme (Topo + Base)", fontSize = 10.sp, color = Color.White, fontWeight = FontWeight.Bold)
             }
         }
 
         Spacer(modifier = Modifier.height(10.dp))
 
-        // Selector for active text box if multiple exist
+        // Layer selection chips if multiple text boxes exist
         if (editorState.textBoxes.isNotEmpty()) {
+            Text("Camadas Ativas:", color = Color.LightGray, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+            Spacer(modifier = Modifier.height(4.dp))
             LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 items(editorState.textBoxes.size) { index ->
                     val box = editorState.textBoxes[index]
@@ -668,7 +771,7 @@ fun TextToolPanel(viewModel: MainViewModel, editorState: com.example.ui.EditorSt
                         onClick = { viewModel.selectTextBox(box.id) },
                         label = {
                             Text(
-                                text = "Texto ${index + 1}: ${box.text.take(10)}${if (box.text.length > 10) "..." else ""}",
+                                text = "Camada ${index + 1}: ${box.text.take(12)}${if (box.text.length > 12) "..." else ""}",
                                 fontSize = 11.sp,
                                 fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal
                             )
@@ -703,7 +806,7 @@ fun TextToolPanel(viewModel: MainViewModel, editorState: com.example.ui.EditorSt
                     }
                     viewModel.updateCaption(newText)
                 },
-                placeholder = { Text("Digite o texto aqui...", color = Color.Gray) },
+                placeholder = { Text("Digite o texto do meme...", color = Color.Gray) },
                 singleLine = true,
                 colors = OutlinedTextFieldDefaults.colors(
                     focusedBorderColor = WhatsAppGreenLight,
@@ -716,7 +819,7 @@ fun TextToolPanel(viewModel: MainViewModel, editorState: com.example.ui.EditorSt
                     .testTag("input_caption_text")
             )
 
-            // Quick Gemini AI suggestion trigger
+            // Gemini AI Suggestion button
             IconButton(
                 onClick = { viewModel.loadGeminiMemeSuggestions() },
                 enabled = !isGeneratingAi,
@@ -740,7 +843,22 @@ fun TextToolPanel(viewModel: MainViewModel, editorState: com.example.ui.EditorSt
                 }
             }
 
+            // Layer actions: Duplicate and Delete
             if (selectedBox != null) {
+                IconButton(
+                    onClick = { viewModel.duplicateTextBox(selectedBox.id) },
+                    modifier = Modifier
+                        .size(44.dp)
+                        .background(Color(0xFF3B82F6).copy(alpha = 0.2f), RoundedCornerShape(8.dp))
+                        .testTag("btn_duplicate_text_box")
+                ) {
+                    Icon(
+                        Icons.Default.ContentCopy,
+                        contentDescription = "Duplicar camada",
+                        tint = Color(0xFF60A5FA)
+                    )
+                }
+
                 IconButton(
                     onClick = { viewModel.removeSelectedTextBox() },
                     modifier = Modifier
@@ -759,8 +877,8 @@ fun TextToolPanel(viewModel: MainViewModel, editorState: com.example.ui.EditorSt
 
         Spacer(modifier = Modifier.height(14.dp))
 
-        // 1. FONT FAMILIES
-        Text("Tipografia / Fonte:", color = Color.LightGray, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+        // 1. FONT FAMILIES (Impact Meme, Comic, Sans, Serif, Monospace, Cursive)
+        Text("Tipografia / Fonte do Meme:", color = Color.LightGray, fontSize = 12.sp, fontWeight = FontWeight.Bold)
         Spacer(modifier = Modifier.height(6.dp))
         LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             items(StickerFontFamily.values()) { font ->
@@ -782,7 +900,7 @@ fun TextToolPanel(viewModel: MainViewModel, editorState: com.example.ui.EditorSt
                         fontFamily = font.fontFamily,
                         color = Color.White,
                         fontSize = 12.sp,
-                        fontWeight = FontWeight.Bold,
+                        fontWeight = if (font == StickerFontFamily.IMPACT_MEME) FontWeight.Black else FontWeight.Bold,
                         modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp)
                     )
                 }
@@ -791,7 +909,155 @@ fun TextToolPanel(viewModel: MainViewModel, editorState: com.example.ui.EditorSt
 
         Spacer(modifier = Modifier.height(14.dp))
 
-        // 2. TEXT STYLES (Meme stroke, Solid, Badge, Neon, Shadow)
+        // 2. TEXT SIZE CONTROLS (Slider + Increment Buttons + Presets)
+        val currentSize = selectedBox?.fontSize ?: 36f
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Text("Tamanho da Fonte:", color = Color.LightGray, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                OutlinedButton(
+                    onClick = {
+                        if (selectedBox != null) {
+                            val newSz = (selectedBox.fontSize - 2f).coerceAtLeast(16f)
+                            viewModel.updateSelectedTextBox { it.copy(fontSize = newSz) }
+                        }
+                    },
+                    shape = RoundedCornerShape(6.dp),
+                    contentPadding = PaddingValues(horizontal = 6.dp, vertical = 1.dp),
+                    modifier = Modifier.height(26.dp)
+                ) {
+                    Text("-", fontSize = 13.sp, color = Color.White, fontWeight = FontWeight.Bold)
+                }
+                Spacer(modifier = Modifier.width(6.dp))
+                Text("${currentSize.toInt()} pt", color = WhatsAppGreenLight, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                Spacer(modifier = Modifier.width(6.dp))
+                OutlinedButton(
+                    onClick = {
+                        if (selectedBox != null) {
+                            val newSz = (selectedBox.fontSize + 2f).coerceAtMost(84f)
+                            viewModel.updateSelectedTextBox { it.copy(fontSize = newSz) }
+                        }
+                    },
+                    shape = RoundedCornerShape(6.dp),
+                    contentPadding = PaddingValues(horizontal = 6.dp, vertical = 1.dp),
+                    modifier = Modifier.height(26.dp)
+                ) {
+                    Text("+", fontSize = 13.sp, color = Color.White, fontWeight = FontWeight.Bold)
+                }
+            }
+        }
+
+        Slider(
+            value = currentSize,
+            onValueChange = { newSize ->
+                if (selectedBox != null) {
+                    viewModel.updateSelectedTextBox { it.copy(fontSize = newSize) }
+                }
+            },
+            valueRange = 16f..84f,
+            colors = SliderDefaults.colors(
+                thumbColor = WhatsAppGreenLight,
+                activeTrackColor = WhatsAppGreen
+            ),
+            modifier = Modifier.fillMaxWidth().testTag("slider_text_font_size")
+        )
+
+        // Presets de Tamanho
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(6.dp)
+        ) {
+            listOf("22 pt (Pequeno)" to 22f, "36 pt (Médio)" to 36f, "48 pt (Meme)" to 48f, "64 pt (Impacto)" to 64f).forEach { (label, sz) ->
+                FilterChip(
+                    selected = kotlin.math.abs(currentSize - sz) < 3f,
+                    onClick = {
+                        if (selectedBox != null) {
+                            viewModel.updateSelectedTextBox { it.copy(fontSize = sz) }
+                        }
+                    },
+                    label = { Text(label, fontSize = 10.sp) },
+                    colors = FilterChipDefaults.filterChipColors(
+                        selectedContainerColor = WhatsAppGreen,
+                        selectedLabelColor = Color.White,
+                        containerColor = DarkSurfaceElevated,
+                        labelColor = Color.LightGray
+                    ),
+                    modifier = Modifier.weight(1f).height(28.dp)
+                )
+            }
+        }
+
+        Spacer(modifier = Modifier.height(14.dp))
+
+        // 3. COLOR PALETTE (Fill color and stroke color)
+        val currentColor = selectedBox?.textColor ?: editorState.captionColor
+        Text("Cor de Preenchimento:", color = Color.LightGray, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+        Spacer(modifier = Modifier.height(6.dp))
+        LazyRow(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+            items(textColors) { (colorVal, name) ->
+                Box(
+                    modifier = Modifier
+                        .size(34.dp)
+                        .clip(CircleShape)
+                        .background(Color(colorVal))
+                        .clickable {
+                            if (selectedBox != null) {
+                                viewModel.updateSelectedTextBox { it.copy(textColor = colorVal) }
+                            }
+                            viewModel.updateCaption(activeText, colorVal)
+                        }
+                        .then(
+                            if (currentColor == colorVal) {
+                                Modifier.border(2.5.dp, Color.White, CircleShape)
+                            } else {
+                                Modifier.border(1.dp, Color.DarkGray, CircleShape)
+                            }
+                        )
+                )
+            }
+        }
+
+        Spacer(modifier = Modifier.height(10.dp))
+
+        // Stroke / Outline color for meme text
+        val currentStroke = selectedBox?.strokeColor ?: AndroidColor.BLACK
+        Text("Cor da Borda / Contorno do Texto:", color = Color.LightGray, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+        Spacer(modifier = Modifier.height(6.dp))
+        LazyRow(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+            items(strokeColors) { (strokeVal, name) ->
+                val isSelected = currentStroke == strokeVal
+                Box(
+                    modifier = Modifier
+                        .size(32.dp)
+                        .clip(CircleShape)
+                        .background(if (strokeVal == AndroidColor.TRANSPARENT) Color.Gray.copy(alpha = 0.3f) else Color(strokeVal))
+                        .clickable {
+                            if (selectedBox != null) {
+                                viewModel.updateSelectedTextBox { it.copy(strokeColor = strokeVal) }
+                            }
+                        }
+                        .then(
+                            if (isSelected) {
+                                Modifier.border(2.5.dp, WhatsAppGreenLight, CircleShape)
+                            } else {
+                                Modifier.border(1.dp, Color.DarkGray, CircleShape)
+                            }
+                        ),
+                    contentAlignment = Alignment.Center
+                ) {
+                    if (strokeVal == AndroidColor.TRANSPARENT) {
+                        Text("∅", color = Color.White, fontSize = 14.sp)
+                    }
+                }
+            }
+        }
+
+        Spacer(modifier = Modifier.height(14.dp))
+
+        // 4. TEXT STYLES (Meme stroke, Solid, Badge, Neon, Shadow)
         Text("Estilo Visual do Texto:", color = Color.LightGray, fontSize = 12.sp, fontWeight = FontWeight.Bold)
         Spacer(modifier = Modifier.height(6.dp))
         LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -822,37 +1088,7 @@ fun TextToolPanel(viewModel: MainViewModel, editorState: com.example.ui.EditorSt
 
         Spacer(modifier = Modifier.height(14.dp))
 
-        // 3. COLOR PALETTE
-        val currentColor = selectedBox?.textColor ?: editorState.captionColor
-        Text("Cor do Texto:", color = Color.LightGray, fontSize = 12.sp, fontWeight = FontWeight.Bold)
-        Spacer(modifier = Modifier.height(6.dp))
-        LazyRow(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-            items(textColors) { (colorVal, name) ->
-                Box(
-                    modifier = Modifier
-                        .size(32.dp)
-                        .clip(CircleShape)
-                        .background(Color(colorVal))
-                        .clickable {
-                            if (selectedBox != null) {
-                                viewModel.updateSelectedTextBox { it.copy(textColor = colorVal) }
-                            }
-                            viewModel.updateCaption(activeText, colorVal)
-                        }
-                        .then(
-                            if (currentColor == colorVal) {
-                                Modifier.border(2.5.dp, Color.White, CircleShape)
-                            } else {
-                                Modifier
-                            }
-                        )
-                )
-            }
-        }
-
-        Spacer(modifier = Modifier.height(14.dp))
-
-        // 4. FORMAT CONTROLS (Bold, Italic, Uppercase, Alignments)
+        // 5. FORMAT CONTROLS (Bold, Italic, Uppercase, Alignments)
         Text("Formatação & Alinhamento:", color = Color.LightGray, fontSize = 12.sp, fontWeight = FontWeight.Bold)
         Spacer(modifier = Modifier.height(6.dp))
         Row(
@@ -970,34 +1206,65 @@ fun TextToolPanel(viewModel: MainViewModel, editorState: com.example.ui.EditorSt
 
         Spacer(modifier = Modifier.height(14.dp))
 
-        // 5. FONT SIZE SLIDER
-        val currentSize = selectedBox?.fontSize ?: 36f
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Text("Tamanho da Fonte:", color = Color.LightGray, fontSize = 12.sp, fontWeight = FontWeight.Bold)
-            Text("${currentSize.toInt()} pt", color = WhatsAppGreenLight, fontSize = 12.sp, fontWeight = FontWeight.Bold)
-        }
-        Slider(
-            value = currentSize,
-            onValueChange = { newSize ->
-                if (selectedBox != null) {
-                    viewModel.updateSelectedTextBox { it.copy(fontSize = newSize) }
+        // 6. ROTATION CONTROL FOR TEXT LAYER
+        if (selectedBox != null) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text("Rotação do Texto:", color = Color.LightGray, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    OutlinedButton(
+                        onClick = { viewModel.rotateSelectedTextBoxBy(-15f) },
+                        shape = RoundedCornerShape(6.dp),
+                        contentPadding = PaddingValues(horizontal = 6.dp, vertical = 2.dp),
+                        modifier = Modifier.height(26.dp)
+                    ) {
+                        Icon(Icons.Default.RotateLeft, contentDescription = null, modifier = Modifier.size(12.dp))
+                        Spacer(modifier = Modifier.width(2.dp))
+                        Text("-15°", fontSize = 10.sp, color = Color.White)
+                    }
+                    Spacer(modifier = Modifier.width(6.dp))
+                    OutlinedButton(
+                        onClick = { viewModel.rotateSelectedTextBoxBy(15f) },
+                        shape = RoundedCornerShape(6.dp),
+                        contentPadding = PaddingValues(horizontal = 6.dp, vertical = 2.dp),
+                        modifier = Modifier.height(26.dp)
+                    ) {
+                        Icon(Icons.Default.RotateRight, contentDescription = null, modifier = Modifier.size(12.dp))
+                        Spacer(modifier = Modifier.width(2.dp))
+                        Text("+15°", fontSize = 10.sp, color = Color.White)
+                    }
+                    Spacer(modifier = Modifier.width(6.dp))
+                    OutlinedButton(
+                        onClick = { viewModel.updateTextBoxRotation(selectedBox.id, 0f) },
+                        shape = RoundedCornerShape(6.dp),
+                        contentPadding = PaddingValues(horizontal = 6.dp, vertical = 2.dp),
+                        modifier = Modifier.height(26.dp)
+                    ) {
+                        Text("0°", fontSize = 10.sp, color = Color.White, fontWeight = FontWeight.Bold)
+                    }
                 }
-            },
-            valueRange = 18f..72f,
-            colors = SliderDefaults.colors(
-                thumbColor = WhatsAppGreenLight,
-                activeTrackColor = WhatsAppGreen
-            ),
-            modifier = Modifier.fillMaxWidth()
-        )
+            }
 
-        Spacer(modifier = Modifier.height(12.dp))
+            Slider(
+                value = selectedBox.rotationDegrees,
+                onValueChange = { newRot ->
+                    viewModel.updateTextBoxRotation(selectedBox.id, newRot)
+                },
+                valueRange = -180f..180f,
+                colors = SliderDefaults.colors(
+                    thumbColor = WhatsAppGreenLight,
+                    activeTrackColor = WhatsAppGreen
+                ),
+                modifier = Modifier.fillMaxWidth().testTag("slider_text_rotation")
+            )
 
-        // 6. POPULAR & GEMINI QUICK PHRASES
+            Spacer(modifier = Modifier.height(10.dp))
+        }
+
+        // 7. POPULAR & GEMINI QUICK PHRASES
         val geminiList by viewModel.geminiSuggestions.collectAsState()
         val displayPhrases = if (geminiList.isNotEmpty()) {
             geminiList.map { "${it.emoji} ${it.caption}" } + quickPhrases
@@ -2016,38 +2283,529 @@ fun SpeechBalloonPanel(viewModel: MainViewModel, currentBalloonText: String) {
 }
 
 @Composable
-fun EmojiToolPanel(viewModel: MainViewModel, currentEmoji: String) {
-    val emojis = listOf(
-        "😂", "😱", "🔥", "🚀", "❤️", "🤡", "💸", "👀",
-        "⚡", "🕶️", "👑", "🍕", "🐶", "💪", "🤫", "🎯"
-    )
+fun EmojiToolPanel(viewModel: MainViewModel, editorState: com.example.ui.EditorState) {
+    val canUndo by viewModel.canUndo.collectAsState()
+    val canRedo by viewModel.canRedo.collectAsState()
 
-    Column {
-        Text("Adicionar Emoji de Reação:", fontWeight = FontWeight.Bold, color = Color.White, fontSize = 13.sp)
-        Spacer(modifier = Modifier.height(10.dp))
+    var searchQuery by remember { mutableStateOf("") }
+    var selectedCategoryIndex by remember { mutableIntStateOf(0) }
 
-        LazyRow(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-            items(emojis) { emoji ->
-                Surface(
-                    shape = CircleShape,
-                    color = if (currentEmoji == emoji) WhatsAppGreen else DarkSurfaceElevated,
-                    modifier = Modifier
-                        .size(42.dp)
-                        .clickable {
-                            if (currentEmoji == emoji) viewModel.updateEmoji("") else viewModel.updateEmoji(emoji)
-                        }
+    val categories = remember {
+        listOf(
+            "🔥 Populares" to listOf(
+                "😂", "🤣", "💀", "🤡", "🗿", "😭", "🥺", "🤪", "🤫", "🥵",
+                "🥶", "😱", "🤯", "🥳", "😎", "🤠", "😈", "🤖", "💩", "👻",
+                "👽", "💅", "🤌", "🚩", "👑", "🧢", "💸", "🔥", "⚡", "👀"
+            ),
+            "😂 Rostos" to listOf(
+                "😀", "😃", "😄", "😁", "😆", "😅", "🤣", "😂", "😇", "😉",
+                "😊", "😋", "😜", "🤪", "😝", "🤑", "🤗", "🤭", "🤫", "🤔",
+                "🤐", "🤨", "😐", "😑", "😶", "😏", "😒", "🙄", "😬", "🤥",
+                "😌", "😔", "😪", "🤤", "😴", "😷", "🤒", "🤕", "🤢", "🤮",
+                "🤧", "😵", "🤯", "🤠", "🥳", "🥸", "😎", "🤓", "🧐"
+            ),
+            "❤️ Reações" to listOf(
+                "❤️", "🧡", "💛", "💚", "💙", "💜", "🖤", "🤍", "🤎", "💔",
+                "❣️", "💕", "💞", "💓", "💗", "💖", "💘", "💝", "💟", "💋",
+                "💯", "💢", "💥", "💫", "💬", "🗨️", "🗯️", "💭", "🪄", "✨",
+                "⭐", "🌟", "🎉", "🎊", "🥂", "🍻"
+            ),
+            "👍 Gestos" to listOf(
+                "👍", "👎", "👊", "✊", "🤛", "🤜", "🤞", "✌️", "🤟", "🤘",
+                "👌", "🤌", "🤏", "👈", "👉", "👆", "👇", "☝️", "✋", "🤚",
+                "🖐️", "🖖", "👋", "🤙", "💪", "🖕", "✍️", "🙏", "👏", "🤝"
+            ),
+            "🇧🇷 Memes & BR" to listOf(
+                "🇧🇷", "⚽", "🍺", "🍻", "☕", "🍕", "🍔", "🍟", "🥑", "🌶️",
+                "💸", "💰", "👑", "🧢", "🕶️", "👓", "⚡", "🔥", "🚀", "💣",
+                "🔫", "🔪", "💉", "💊", "🚬", "🏆", "🥇", "🎮", "🎤", "🎧",
+                "🚗", "🛵", "🏖️", "🌴", "🥥", "🍿"
+            ),
+            "🐶 Animais" to listOf(
+                "🐶", "🐱", "🐭", "🐹", "🐰", "🦊", "🐻", "🐼", "🐨", "🐯",
+                "🦁", "🐮", "🐷", "🐸", "🐵", "🐔", "🐧", "🐦", "🦆", "🦅",
+                "🦉", "🦇", "🐺", "🐗", "🐴", "🦄", "🐝", "🐛", "🦋", "🐌",
+                "🐞", "🐢", "🐍", "🐙", "🦑", "🐬", "🦈", "🐊", "🦖", "🦕"
+            )
+        )
+    }
+
+    val currentEmojis = remember(selectedCategoryIndex, searchQuery) {
+        if (searchQuery.isNotBlank()) {
+            val all = categories.flatMap { it.second }.distinct()
+            val q = searchQuery.trim().lowercase()
+            all.filter { emoji ->
+                // Simple search matching emoji or basic common keywords
+                when {
+                    q in "riso rir engraçado kkk gargalhada" && emoji in listOf("😂", "🤣", "😆", "😅", "😁") -> true
+                    q in "choro chorar lagrima triste" && emoji in listOf("😭", "🥺", "😢", "😥") -> true
+                    q in "fogo chama quente" && emoji in listOf("🔥", "🥵") -> true
+                    q in "amor coracao apaixonado" && emoji in listOf("❤️", "💖", "💕", "😍", "🥰", "😘", "💔") -> true
+                    q in "dinheiro rico grana" && emoji in listOf("💸", "💰", "🤑") -> true
+                    q in "palhaco circo" && emoji == "🤡" -> true
+                    q in "caveira morte" && emoji in listOf("💀", "☠️") -> true
+                    q in "brasil" && emoji == "🇧🇷" -> true
+                    q in "joinha legal ok" && emoji in listOf("👍", "👌") -> true
+                    q in "oculos sol estilo" && emoji in listOf("🕶️", "😎") -> true
+                    else -> emoji.contains(q)
+                }
+            }
+        } else {
+            categories[selectedCategoryIndex].second
+        }
+    }
+
+    val selectedEmoji = editorState.emojiItems.find { it.id == editorState.selectedEmojiId }
+        ?: editorState.emojiItems.lastOrNull()
+
+    Column(modifier = Modifier.fillMaxWidth()) {
+        // Header with Undo/Redo and Counter
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(
+                    text = "SELETOR DE EMOJIS",
+                    fontWeight = FontWeight.Bold,
+                    color = Color.White,
+                    fontSize = 13.sp
+                )
+                if (editorState.emojiItems.isNotEmpty()) {
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Surface(
+                        shape = RoundedCornerShape(10.dp),
+                        color = WhatsAppGreen.copy(alpha = 0.2f),
+                        border = BorderStroke(1.dp, WhatsAppGreenLight)
+                    ) {
+                        Text(
+                            text = "${editorState.emojiItems.size}",
+                            color = WhatsAppGreenLight,
+                            fontSize = 10.sp,
+                            fontWeight = FontWeight.Bold,
+                            modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                        )
+                    }
+                }
+            }
+
+            Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                IconButton(
+                    onClick = { viewModel.undo() },
+                    enabled = canUndo,
+                    colors = IconButtonDefaults.iconButtonColors(
+                        contentColor = Color.White,
+                        disabledContentColor = Color.Gray.copy(alpha = 0.35f)
+                    ),
+                    modifier = Modifier.size(32.dp).testTag("btn_emoji_undo")
                 ) {
-                    Box(contentAlignment = Alignment.Center) {
-                        Text(emoji, fontSize = 20.sp)
+                    Icon(
+                        Icons.AutoMirrored.Filled.Undo,
+                        contentDescription = "Desfazer",
+                        modifier = Modifier.size(16.dp)
+                    )
+                }
+
+                IconButton(
+                    onClick = { viewModel.redo() },
+                    enabled = canRedo,
+                    colors = IconButtonDefaults.iconButtonColors(
+                        contentColor = Color.White,
+                        disabledContentColor = Color.Gray.copy(alpha = 0.35f)
+                    ),
+                    modifier = Modifier.size(32.dp).testTag("btn_emoji_redo")
+                ) {
+                    Icon(
+                        Icons.AutoMirrored.Filled.Redo,
+                        contentDescription = "Refazer",
+                        modifier = Modifier.size(16.dp)
+                    )
+                }
+
+                if (editorState.emojiItems.isNotEmpty()) {
+                    IconButton(
+                        onClick = { viewModel.clearAllEmojis() },
+                        colors = IconButtonDefaults.iconButtonColors(contentColor = Color(0xFFEF4444)),
+                        modifier = Modifier.size(32.dp).testTag("btn_clear_all_emojis")
+                    ) {
+                        Icon(
+                            Icons.Default.Delete,
+                            contentDescription = "Limpar todos os emojis",
+                            modifier = Modifier.size(16.dp)
+                        )
                     }
                 }
             }
         }
 
-        if (currentEmoji.isNotBlank()) {
-            Spacer(modifier = Modifier.height(10.dp))
-            TextButton(onClick = { viewModel.updateEmoji("") }) {
-                Text("Remover emoji", color = Color.Gray, fontSize = 11.sp)
+        Text(
+            text = "Adicione emojis sobrepostos à figurinha, arraste e ajuste tamanho e rotação.",
+            color = Color.Gray,
+            fontSize = 12.sp,
+            modifier = Modifier.padding(top = 2.dp, bottom = 10.dp)
+        )
+
+        // If there are added emojis, show active emoji controls
+        if (selectedEmoji != null) {
+            Card(
+                shape = RoundedCornerShape(14.dp),
+                colors = CardDefaults.cardColors(containerColor = DarkSurfaceElevated),
+                border = BorderStroke(1.dp, WhatsAppGreenLight.copy(alpha = 0.4f)),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(bottom = 12.dp)
+                    .testTag("selected_emoji_controls_card")
+            ) {
+                Column(modifier = Modifier.padding(12.dp)) {
+                    // Title and Quick Actions
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Surface(
+                                shape = CircleShape,
+                                color = Color(0xFF1E293B),
+                                border = BorderStroke(1.dp, WhatsAppGreenLight),
+                                modifier = Modifier.size(44.dp)
+                            ) {
+                                Box(contentAlignment = Alignment.Center) {
+                                    Text(selectedEmoji.emoji, fontSize = 24.sp)
+                                }
+                            }
+                            Spacer(modifier = Modifier.width(10.dp))
+                            Column {
+                                Text(
+                                    text = "Emoji Selecionado",
+                                    color = Color.White,
+                                    fontSize = 13.sp,
+                                    fontWeight = FontWeight.Bold
+                                )
+                                Text(
+                                    text = "Escala: ${String.format("%.1fx", selectedEmoji.scale)}  •  Rotação: ${selectedEmoji.rotationDegrees.toInt()}°",
+                                    color = WhatsAppGreenLight,
+                                    fontSize = 11.sp
+                                )
+                            }
+                        }
+
+                        // Action Buttons: Flip, Duplicate, Delete
+                        Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                            IconButton(
+                                onClick = { viewModel.flipSelectedEmoji() },
+                                modifier = Modifier.size(32.dp).testTag("btn_flip_selected_emoji")
+                            ) {
+                                Icon(
+                                    Icons.Default.Flip,
+                                    contentDescription = "Espelhar emoji",
+                                    tint = if (selectedEmoji.isFlipped) WhatsAppGreenLight else Color.White,
+                                    modifier = Modifier.size(16.dp)
+                                )
+                            }
+
+                            IconButton(
+                                onClick = { viewModel.duplicateEmoji(selectedEmoji.id) },
+                                modifier = Modifier.size(32.dp).testTag("btn_duplicate_selected_emoji")
+                            ) {
+                                Icon(
+                                    Icons.Default.ContentCopy,
+                                    contentDescription = "Duplicar emoji",
+                                    tint = Color.White,
+                                    modifier = Modifier.size(16.dp)
+                                )
+                            }
+
+                            IconButton(
+                                onClick = { viewModel.removeSelectedEmoji() },
+                                colors = IconButtonDefaults.iconButtonColors(contentColor = Color(0xFFEF4444)),
+                                modifier = Modifier.size(32.dp).testTag("btn_delete_selected_emoji")
+                            ) {
+                                Icon(
+                                    Icons.Default.Delete,
+                                    contentDescription = "Remover emoji",
+                                    modifier = Modifier.size(16.dp)
+                                )
+                            }
+                        }
+                    }
+
+                    Spacer(modifier = Modifier.height(10.dp))
+
+                    // --- Controle de Redimensionamento (Tamanho / Escala) ---
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = "Tamanho:",
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.Medium,
+                            color = Color.White
+                        )
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            OutlinedButton(
+                                onClick = {
+                                    viewModel.updateEmojiScale(selectedEmoji.id, selectedEmoji.scale - 0.15f)
+                                },
+                                shape = RoundedCornerShape(8.dp),
+                                contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp),
+                                modifier = Modifier.height(28.dp)
+                            ) {
+                                Text("-", fontSize = 14.sp, color = Color.White, fontWeight = FontWeight.Bold)
+                            }
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text(
+                                text = String.format("%.1fx", selectedEmoji.scale),
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = WhatsAppGreenLight
+                            )
+                            Spacer(modifier = Modifier.width(6.dp))
+                            OutlinedButton(
+                                onClick = {
+                                    viewModel.updateEmojiScale(selectedEmoji.id, selectedEmoji.scale + 0.15f)
+                                },
+                                shape = RoundedCornerShape(8.dp),
+                                contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp),
+                                modifier = Modifier.height(28.dp)
+                            ) {
+                                Text("+", fontSize = 14.sp, color = Color.White, fontWeight = FontWeight.Bold)
+                            }
+                        }
+                    }
+
+                    Slider(
+                        value = selectedEmoji.scale,
+                        onValueChange = { newScale ->
+                            viewModel.updateEmojiScale(selectedEmoji.id, newScale)
+                        },
+                        valueRange = 0.4f..3.0f,
+                        colors = SliderDefaults.colors(
+                            thumbColor = WhatsAppGreenLight,
+                            activeTrackColor = WhatsAppGreen
+                        ),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .testTag("slider_emoji_scale")
+                    )
+
+                    // Presets de Tamanho
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        listOf(
+                            "0.7x" to 0.7f,
+                            "1.0x (Padrão)" to 1.0f,
+                            "1.5x" to 1.5f,
+                            "2.2x" to 2.2f
+                        ).forEach { (label, value) ->
+                            FilterChip(
+                                selected = kotlin.math.abs(selectedEmoji.scale - value) < 0.1f,
+                                onClick = { viewModel.updateEmojiScale(selectedEmoji.id, value) },
+                                label = { Text(label, fontSize = 10.sp) },
+                                colors = FilterChipDefaults.filterChipColors(
+                                    selectedContainerColor = WhatsAppGreen,
+                                    selectedLabelColor = Color.White,
+                                    labelColor = Color.LightGray
+                                ),
+                                modifier = Modifier.weight(1f).height(28.dp)
+                            )
+                        }
+                    }
+
+                    Spacer(modifier = Modifier.height(10.dp))
+
+                    // --- Controle de Rotação ---
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = "Rotação:",
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.Medium,
+                            color = Color.White
+                        )
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            // Botão Girar -15°
+                            OutlinedButton(
+                                onClick = { viewModel.rotateSelectedEmojiBy(-15f) },
+                                shape = RoundedCornerShape(8.dp),
+                                contentPadding = PaddingValues(horizontal = 6.dp, vertical = 2.dp),
+                                modifier = Modifier.height(28.dp).testTag("btn_rotate_emoji_minus_15")
+                            ) {
+                                Icon(Icons.Default.RotateLeft, contentDescription = null, modifier = Modifier.size(12.dp))
+                                Spacer(modifier = Modifier.width(3.dp))
+                                Text("-15°", fontSize = 10.sp, color = Color.White)
+                            }
+                            Spacer(modifier = Modifier.width(6.dp))
+                            // Botão Girar +15°
+                            OutlinedButton(
+                                onClick = { viewModel.rotateSelectedEmojiBy(15f) },
+                                shape = RoundedCornerShape(8.dp),
+                                contentPadding = PaddingValues(horizontal = 6.dp, vertical = 2.dp),
+                                modifier = Modifier.height(28.dp).testTag("btn_rotate_emoji_plus_15")
+                            ) {
+                                Icon(Icons.Default.RotateRight, contentDescription = null, modifier = Modifier.size(12.dp))
+                                Spacer(modifier = Modifier.width(3.dp))
+                                Text("+15°", fontSize = 10.sp, color = Color.White)
+                            }
+                            Spacer(modifier = Modifier.width(6.dp))
+                            // Botão Zerar 0°
+                            OutlinedButton(
+                                onClick = { viewModel.updateEmojiRotation(selectedEmoji.id, 0f) },
+                                shape = RoundedCornerShape(8.dp),
+                                contentPadding = PaddingValues(horizontal = 6.dp, vertical = 2.dp),
+                                modifier = Modifier.height(28.dp).testTag("btn_reset_emoji_rotation")
+                            ) {
+                                Text("0°", fontSize = 10.sp, color = Color.White, fontWeight = FontWeight.Bold)
+                            }
+                        }
+                    }
+
+                    Slider(
+                        value = selectedEmoji.rotationDegrees,
+                        onValueChange = { newRot ->
+                            viewModel.updateEmojiRotation(selectedEmoji.id, newRot)
+                        },
+                        valueRange = -180f..180f,
+                        colors = SliderDefaults.colors(
+                            thumbColor = WhatsAppGreenLight,
+                            activeTrackColor = WhatsAppGreen
+                        ),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .testTag("slider_emoji_rotation")
+                    )
+
+                    // Presets de Rotação
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        listOf("-90°" to -90f, "-45°" to -45f, "0°" to 0f, "+45°" to 45f, "+90°" to 90f).forEach { (label, deg) ->
+                            FilterChip(
+                                selected = kotlin.math.abs(selectedEmoji.rotationDegrees - deg) < 5f,
+                                onClick = { viewModel.updateEmojiRotation(selectedEmoji.id, deg) },
+                                label = { Text(label, fontSize = 10.sp) },
+                                colors = FilterChipDefaults.filterChipColors(
+                                    selectedContainerColor = WhatsAppGreen,
+                                    selectedLabelColor = Color.White,
+                                    labelColor = Color.LightGray
+                                ),
+                                modifier = Modifier.weight(1f).height(28.dp)
+                            )
+                        }
+                    }
+
+                    // Se houver mais de um emoji adicionado, mostrar seletor rápido de camada
+                    if (editorState.emojiItems.size > 1) {
+                        Spacer(modifier = Modifier.height(10.dp))
+                        Text(
+                            text = "Emojis na figurinha (${editorState.emojiItems.size}):",
+                            fontSize = 11.sp,
+                            color = Color.Gray,
+                            fontWeight = FontWeight.Medium
+                        )
+                        Spacer(modifier = Modifier.height(6.dp))
+                        LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            items(editorState.emojiItems) { item ->
+                                val isItemActive = item.id == selectedEmoji.id
+                                Surface(
+                                    shape = CircleShape,
+                                    color = if (isItemActive) WhatsAppGreen else Color(0xFF1E293B),
+                                    border = BorderStroke(
+                                        1.5.dp,
+                                        if (isItemActive) WhatsAppGreenLight else Color.Transparent
+                                    ),
+                                    modifier = Modifier
+                                        .size(36.dp)
+                                        .clickable { viewModel.selectEmojiItem(item.id) }
+                                ) {
+                                    Box(contentAlignment = Alignment.Center) {
+                                        Text(item.emoji, fontSize = 16.sp)
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // --- Seletor de Emojis para Adicionar ---
+        Text(
+            text = "Adicionar Novo Emoji:",
+            fontWeight = FontWeight.Bold,
+            color = Color.White,
+            fontSize = 13.sp,
+            modifier = Modifier.padding(bottom = 8.dp)
+        )
+
+        // Categorias Tabs / Filter Chips
+        LazyRow(
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
+            modifier = Modifier.fillMaxWidth().padding(bottom = 10.dp)
+        ) {
+            items(categories.indices.toList()) { index ->
+                val (categoryName, _) = categories[index]
+                val isSelected = selectedCategoryIndex == index
+                FilterChip(
+                    selected = isSelected,
+                    onClick = {
+                        selectedCategoryIndex = index
+                        searchQuery = ""
+                    },
+                    label = { Text(categoryName, fontSize = 11.sp, fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal) },
+                    colors = FilterChipDefaults.filterChipColors(
+                        selectedContainerColor = WhatsAppGreen,
+                        selectedLabelColor = Color.White,
+                        containerColor = DarkSurfaceElevated,
+                        labelColor = Color.LightGray
+                    ),
+                    modifier = Modifier.height(32.dp).testTag("emoji_cat_$index")
+                )
+            }
+        }
+
+        // Grade de Emojis Selecionáveis
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .background(DarkSurfaceElevated, RoundedCornerShape(14.dp))
+                .padding(10.dp)
+        ) {
+            // Dividir em linhas de 6 emojis para ótima usabilidade e touch target
+            val emojiChunks = currentEmojis.chunked(6)
+            emojiChunks.forEach { rowEmojis ->
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(vertical = 4.dp),
+                    horizontalArrangement = Arrangement.SpaceAround
+                ) {
+                    rowEmojis.forEach { emoji ->
+                        Surface(
+                            shape = CircleShape,
+                            color = Color(0xFF1E293B),
+                            modifier = Modifier
+                                .size(46.dp)
+                                .clickable {
+                                    viewModel.addEmojiItem(emoji)
+                                }
+                                .testTag("emoji_item_$emoji")
+                        ) {
+                            Box(contentAlignment = Alignment.Center) {
+                                Text(emoji, fontSize = 22.sp)
+                            }
+                        }
+                    }
+                }
             }
         }
     }
